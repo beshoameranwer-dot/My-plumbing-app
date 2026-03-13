@@ -1,0 +1,140 @@
+import streamlit as st
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import urllib.parse
+
+# --- 1. إعداد قاعدة البيانات (المخزن والعملاء) ---
+conn = sqlite3.connect('plumbing_data.db')
+c = conn.cursor()
+
+# إنشاء الجداول إذا لم تكن موجودة
+c.execute('CREATE TABLE IF NOT EXISTS inventory (item TEXT PRIMARY KEY, price REAL, qty INTEGER, category TEXT)')
+c.execute('CREATE TABLE IF NOT EXISTS customers (phone TEXT PRIMARY KEY, name TEXT, debt REAL)')
+c.execute('CREATE TABLE IF NOT EXISTS sales (id TEXT, total REAL, date TEXT)')
+conn.commit()
+
+# --- 2. إعدادات الصفحة والواجهة ---
+st.set_page_config(page_title="نظام سباكة برو", layout="wide")
+
+# كود لتنسيق الاتجاه للعربية
+st.markdown("""
+    <style>
+    .main { direction: rtl; text-align: right; }
+    div.stButton > button:first-child { width: 100%; border-radius: 10px; height: 60px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. نظام "السلة" المؤقتة ---
+if 'cart' not in st.session_state:
+    st.session_state.cart = {}
+
+# --- 4. القائمة الجانبية (بيانات العميل) ---
+st.sidebar.header("👤 بيانات العميل والشحن")
+customer_name = st.sidebar.text_input("اسم العميل")
+customer_phone = st.sidebar.text_input("رقم الواتساب (مثال: 2010...)")
+delivery_fee = st.sidebar.number_input("رسوم التوصيل", min_value=0.0, step=1.0)
+order_type = st.sidebar.selectbox("نوع الفاتورة", ["بيع نقدي", "بيع آجل", "مرتجع"])
+
+# --- 5. جسم البرنامج (الأقسام والمنتجات) ---
+st.title("🚰 متجر السباكة الذكي")
+
+# تنبيه للمخزن المنخفض
+low_stock_items = c.execute("SELECT item, qty FROM inventory WHERE qty < 5").fetchall()
+if low_stock_items:
+    st.warning(f"⚠️ تنبيه: هناك {len(low_stock_items)} أصناف كميتها أوشكت على النفاد!")
+
+# نظام المجلدات (Tabs)
+tab_titles = ["مواسير", "خلاطات", "محابس", "إكسسوارات"]
+tabs = st.tabs(tab_titles)
+
+for i, cat in enumerate(tab_titles):
+    with tabs[i]:
+        items = c.execute("SELECT item, price, qty FROM inventory WHERE category=?", (cat,)).fetchall()
+        if not items:
+            st.info(f"لا توجد بضاعة في قسم {cat} حالياً. أضف بضاعة من الأسفل.")
+        else:
+            cols = st.columns(4)
+            for idx, item in enumerate(items):
+                with cols[idx % 4]:
+                    # زر المنتج
+                    if st.button(f"{item[0]}\n{item[1]} ريال", key=f"item_{item[0]}"):
+                        if item[0] in st.session_state.cart:
+                            st.session_state.cart[item[0]]['qty'] += 1
+                        else:
+                            st.session_state.cart[item[0]] = {'price': item[1], 'qty': 1}
+                        st.rerun()
+
+# --- 6. عرض الفاتورة الحالية ---
+st.divider()
+st.subheader("🧾 مراجعة الطلب")
+
+if st.session_state.cart:
+    total_bill = 0
+    for name, info in list(st.session_state.cart.items()):
+        c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+        c1.write(f"**{name}**")
+        
+        # أزرار زيادة ونقص الكمية
+        col_m, col_v, col_p = c2.columns(3)
+        if col_m.button("➖", key=f"minus_{name}"):
+            st.session_state.cart[name]['qty'] -= 1
+            if st.session_state.cart[name]['qty'] <= 0: del st.session_state.cart[name]
+            st.rerun()
+        col_v.write(st.session_state.cart[name]['qty'])
+        if col_p.button("➕", key=f"plus_{name}"):
+            st.session_state.cart[name]['qty'] += 1
+            st.rerun()
+            
+        line_total = info['price'] * info['qty']
+        total_bill += line_total
+        c3.write(f"{line_total} ريال")
+        if c4.button("🗑️", key=f"del_{name}"):
+            del st.session_state.cart[name]
+            st.rerun()
+
+    # الحسابات الختامية
+    st.sidebar.divider()
+    grand_total = total_bill + delivery_fee
+    st.sidebar.markdown(f"### الإجمالي: {grand_total} ريال")
+    
+    paid_amount = st.sidebar.number_input("المبلغ المدفوع", min_value=0.0)
+    remaining = grand_total - paid_amount
+    
+    if st.sidebar.button("✅ اعتماد وحفظ الفاتورة"):
+        # حفظ في قاعدة البيانات
+        inv_id = datetime.now().strftime("%Y%m%d%H%M")
+        c.execute("INSERT INTO sales VALUES (?, ?, ?)", (inv_id, grand_total, datetime.now().strftime("%Y-%m-%d")))
+        
+        # إذا كان هناك دين، سجل اسم العميل ورقم هاتفه
+        if remaining > 0:
+            c.execute("INSERT OR REPLACE INTO customers VALUES (?, ?, IFNULL((SELECT debt FROM customers WHERE phone=?), 0) + ?)", 
+                      (customer_phone, customer_name, customer_phone, remaining))
+        
+        conn.commit()
+        st.sidebar.success("تم الحفظ في قاعدة البيانات!")
+        
+        # إنشاء رسالة الواتساب
+        msg = f"فاتورة من متجر السباكة\nالعميل: {customer_name}\nالإجمالي: {grand_total}\nالمدفوع: {paid_amount}\nالمتبقي: {remaining}"
+        encoded_msg = urllib.parse.quote(msg)
+        whatsapp_url = f"https://api.whatsapp.com/send?phone={customer_phone}&text={encoded_msg}"
+        st.sidebar.markdown(f"[📲 إرسال واتساب الموبايل]({whatsapp_url})")
+
+# --- 7. قسم إدارة المخزن (لإضافة أصناف جديدة) ---
+with st.expander("🛠️ إضافة بضاعة جديدة للمخزن"):
+    new_name = st.text_input("اسم الصنف (مثلاً: ماسورة 1 بوصة)")
+    new_price = st.number_input("سعر البيع", min_value=0.0)
+    new_qty = st.number_input("الكمية المتاحة", min_value=1)
+    new_cat = st.selectbox("اختر القسم", tab_titles)
+    
+    if st.button("حفظ الصنف الجديد"):
+        c.execute("INSERT OR REPLACE INTO inventory VALUES (?, ?, ?, ?)", (new_name, new_price, new_qty, new_cat))
+        conn.commit()
+        st.success(f"تم إضافة {new_name} بنجاح!")
+        st.rerun()
+
+# --- 8. عرض الديون ---
+if st.sidebar.checkbox("🔍 كشف الديون"):
+    st.subheader("👥 سجل العملاء والديون")
+    debt_data = pd.read_sql_query("SELECT name as الاسم, phone as الهاتف, debt as المبلغ_المتبقي FROM customers", conn)
+    st.table(debt_data)
