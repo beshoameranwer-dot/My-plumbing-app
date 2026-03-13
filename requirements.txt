@@ -1,0 +1,189 @@
+import streamlit as st
+
+import pandas as pd
+
+import sqlite3
+
+from datetime import datetime
+
+import urllib.parse
+
+# --- إعداد قاعدة البيانات ---
+
+conn = sqlite3.connect('plumbing_pro.db')
+
+c = conn.cursor()
+
+c.execute('CREATE TABLE IF NOT EXISTS inventory (item TEXT PRIMARY KEY, price REAL, qty INTEGER, category TEXT, color TEXT)')
+
+c.execute('CREATE TABLE IF NOT EXISTS customers (phone TEXT PRIMARY KEY, name TEXT, address TEXT, debt REAL)')
+
+c.execute('CREATE TABLE IF NOT EXISTS invoices (id TEXT, cust_name TEXT, total REAL, paid REAL, type TEXT, date TEXT)')
+
+conn.commit()
+
+# --- تهيئة الحالة (Session) ---
+
+if 'cart' not in st.session_state:
+
+    st.session_state.cart = {}
+
+# --- واجهة التطبيق ---
+
+st.set_page_config(page_title="نظام سباكة برو", layout="wide")
+
+# تنبيه المخزن المنخفض
+
+low_stock = c.execute("SELECT item, qty FROM inventory WHERE qty < 5").fetchall()
+
+if low_stock:
+
+    for item in low_stock:
+
+        st.error(f"⚠️ تنبيه: الصنف {item[0]} رصيده منخفض جداً ({item[1]})")
+
+st.title("🚰 نظام إدارة السباكة المتكامل")
+
+# --- بيانات العميل والشحن ---
+
+with st.sidebar:
+
+    st.header("👤 بيانات العميل")
+
+    c_name = st.text_input("اسم العميل")
+
+    c_phone = st.text_input("رقم الواتساب")
+
+    c_address = st.text_input("العنوان")
+
+    driver = st.text_input("اسم السائق")
+
+    delivery_fee = st.number_input("رسوم التوصيل", min_value=0.0)
+
+    inv_type = st.radio("نوع العملية", ["مبيعات", "مرتجعات", "مؤقتة"])
+
+# --- نظام المجلدات (Tabs) ---
+
+tabs = st.tabs(["مواسير", "خلاطات", "محابس", "إضافات"])
+
+categories = {"مواسير": "#3498db", "خلاطات": "#e74c3c", "محابس": "#2ecc71", "إضافات": "#f1c40f"}
+
+for i, (cat_name, cat_color) in enumerate(categories.items()):
+
+    with tabs[i]:
+
+        items = c.execute("SELECT item, price, qty FROM inventory WHERE category=?", (cat_name,)).fetchall()
+
+        if not items:
+
+            st.info(f"لا توجد أصناف في قسم {cat_name}")
+
+        else:
+
+            cols = st.columns(4)
+
+            for idx, item in enumerate(items):
+
+                with cols[idx % 4]:
+
+                    if st.button(f"{item[0]}\\n{item[1]} ريال", key=f"btn_{item[0]}"):
+
+                        if item[0] in st.session_state.cart:
+
+                            st.session_state.cart[item[0]]['qty'] += 1
+
+                        else:
+
+                            st.session_state.cart[item[0]] = {'price': item[1], 'qty': 1}
+
+# --- مراجعة الفاتورة ---
+
+st.divider()
+
+if st.session_state.cart:
+
+    total_price = 0
+
+    for name, info in list(st.session_state.cart.items()):
+
+        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+
+        with col1: st.write(f"**{name}**")
+
+        with col2:
+
+            cm, cv, cp = st.columns(3)
+
+            if cm.button("➖", key=f"m_{name}"):
+
+                st.session_state.cart[name]['qty'] -= 1
+
+                if st.session_state.cart[name]['qty'] <= 0: del st.session_state.cart[name]
+
+                st.rerun()
+
+            cv.write(st.session_state.cart[name]['qty'])
+
+            if cp.button("➕", key=f"p_{name}"):
+
+                st.session_state.cart[item[0]]['qty'] += 1
+
+                st.rerun()
+
+        
+
+        line_total = info['price'] * st.session_state.cart[name]['qty']
+
+        total_price += line_total
+
+        with col3: st.write(f"{line_total} ريال")
+
+        with col4: 
+
+            if st.button("🗑️", key=f"d_{name}"):
+
+                del st.session_state.cart[name]
+
+                st.rerun()
+
+    grand_total = (total_price + delivery_fee)
+
+    st.markdown(f"## الإجمالي النهائي: {grand_total:.2f} ريال")
+
+    
+
+    paid = st.number_input("المبلغ المدفوع", min_value=0.0)
+
+    remaining = grand_total - paid
+
+    
+
+    if st.button("✅ حفظ الفاتورة وإرسال واتساب"):
+
+        st.success("تم الحفظ!")
+
+        msg = f"فاتورة {inv_type}\\nالعميل: {c_name}\\nالإجمالي: {grand_total}\\nالمدفوع: {paid}\\nالمتبقي: {remaining}"
+
+        url = f"https://api.whatsapp.com/send?phone={c_phone}&text={urllib.parse.quote(msg)}"
+
+        st.markdown(f"[📲 إرسال للواتساب]({url})")
+
+# --- إدارة المخزن ---
+
+with st.expander("🛠️ إعدادات المخزن"):
+
+    new_item = st.text_input("اسم الصنف الجديد")
+
+    new_price = st.number_input("السعر", min_value=0.0)
+
+    new_qty = st.number_input("الكمية المتاحة", min_value=0)
+
+    new_cat = st.selectbox("المجلد", ["مواسير", "خلاطات", "محابس", "إضافات"])
+
+    if st.button("إضافة للمخزن"):
+
+        c.execute("INSERT OR REPLACE INTO inventory VALUES (?, ?, ?, ?, ?)", (new_item, new_price, new_qty, new_cat, "#fff"))
+
+        conn.commit()
+
+        st.success("تمت الإضافة")
