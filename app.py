@@ -1,131 +1,146 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import urllib.parse
+import json
 
-# إعداد الصفحة وتنسيق الألوان
-st.set_page_config(page_title="نظام مبيعات السباكة", layout="wide")
+# --- 1. إعدادات الواجهة ---
+st.set_page_config(page_title="Marketing Shop POS", layout="wide")
 
 st.markdown("""
     <style>
-    .main { direction: rtl; text-align: right; background-color: #f8f9fa; }
-    .stButton>button {
-        height: 80px; font-size: 18px; font-weight: bold;
-        background-color: #ff9800; color: white; border-radius: 12px; border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .stButton>button:hover { background-color: #e68a00; }
-    .invoice-box {
-        background-color: white; padding: 25px; border-radius: 15px;
-        border: 2px solid #eee; box-shadow: 0 10px 20px rgba(0,0,0,0.05);
-    }
-    .total-section {
-        background-color: #2c3e50; color: white; padding: 15px;
-        border-radius: 10px; text-align: center; margin-top: 20px;
-    }
+    .main { direction: rtl; text-align: right; }
+    .stButton>button { border-radius: 10px; height: 60px; font-weight: bold; width: 100%; color: white; border: none; }
+    .invoice-card { background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #ddd; color: black; }
+    .sidebar-section { background-color: #f1f3f5; padding: 10px; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# قاعدة بيانات المنتجات (يمكنك مسحها وإضافة منتجاتك من داخل التطبيق)
+# --- 2. تهيئة البيانات في الذاكرة ---
 if 'inventory' not in st.session_state:
-    st.session_state.inventory = [
-        {"name": "كوع 1 بوصة", "price": 25}, {"name": "ماسورة 2 متر", "price": 180},
-        {"name": "خلاط مياه ميكسر", "price": 1450}, {"name": "محبس زاوية تركي", "price": 75},
-        {"name": "تيس بلاستيك", "price": 40}, {"name": "جلبة إصلاح", "price": 30}
-    ]
-
+    st.session_state.inventory = [] # المنتجات
+if 'folders' not in st.session_state:
+    st.session_state.folders = {} # المجلدات وألوانها
 if 'bill_items' not in st.session_state:
-    st.session_state.bill_items = []
+    st.session_state.bill_items = [] # الفاتورة الحالية
+if 'history' not in st.session_state:
+    st.session_state.history = [] # سجل المبيعات
+if 'current_folder' not in st.session_state:
+    st.session_state.current_folder = None
 
-st.title("🏗️ كاشير السباكة المطور")
+# --- 3. القائمة الجانبية (التنقل) ---
+with st.sidebar:
+    st.title("🏪 Marketing Shop")
+    page = st.radio("القائمة الرئيسية:", ["واجهة الكاشير (POS)", "رصيد المخازن", "إضافة منتجات ومجلدات", "سجل الفواتير"])
+    st.divider()
+    # ميزة الحفظ اليدوي بديلة للسحابة
+    st.subheader("💾 حفظ البيانات")
+    full_data = {"inv": st.session_state.inventory, "fold": st.session_state.folders, "hist": st.session_state.history}
+    st.download_button("تحميل نسخة احتياطية (Excel/JSON)", json.dumps(full_data), "shop_data.json")
 
-# تقسيم الشاشة
-col_bill, col_products = st.columns([1.5, 2])
-
-# --- قسم المربعات (يسار الشاشة) ---
-with col_products:
-    st.subheader("📦 قائمة البضاعة (اضغط للإضافة)")
-    n_cols = 3
-    for i in range(0, len(st.session_state.inventory), n_cols):
-        cols = st.columns(n_cols)
-        for j, item in enumerate(st.session_state.inventory[i:i+n_cols]):
-            with cols[j]:
-                if st.button(f"{item['name']}\n{item['price']} ج"):
-                    st.session_state.bill_items.append({
-                        "id": datetime.now().timestamp(), # معرف فريد لكل بند
-                        "الصنف": item['name'],
-                        "السعر": item['price'],
-                        "الكمية": 1,
-                        "الخصم %": 0.0
-                    })
-                    st.rerun()
-
-# --- قسم الفاتورة (يمين الشاشة) ---
-with col_bill:
-    st.markdown('<div class="invoice-box">', unsafe_allow_html=True)
-    st.subheader("📝 تفاصيل الفاتورة")
+# --- 4. صفحة الإعدادات (إضافة الأصناف والمجلدات) ---
+if page == "إضافة منتجات ومجلدات":
+    st.header("📂 تنظيم المجلدات والأصناف")
+    col1, col2 = st.columns(2)
     
-    cust_name = st.text_input("اسم العميل / المقاول", "عميل نقدي")
-    
-    if st.session_state.bill_items:
-        bill_display = []
-        grand_total = 0
-        
-        for idx, item in enumerate(st.session_state.bill_items):
-            with st.expander(f"⚙️ {item['الصنف']} - {item['السعر']} ج", expanded=True):
-                c1, c2, c3 = st.columns([1, 1, 0.5])
-                with c1:
-                    item['الكمية'] = st.number_input(f"الكمية", min_value=1, value=item['الكمية'], key=f"q_{item['id']}")
-                with c2:
-                    item['الخصم %'] = st.number_input(f"نسبة الخصم %", min_value=0.0, max_value=100.0, value=item['الخصم %'], key=f"d_{item['id']}")
-                with c3:
-                    if st.button("❌", key=f"del_{item['id']}"):
-                        st.session_state.bill_items.pop(idx)
+    with col1:
+        st.subheader("📁 إنشاء مجلد جديد")
+        f_name = st.text_input("اسم المجلد (مثلاً: سباكة)")
+        f_color = st.selectbox("لون المجلد", ["green", "orange", "gray", "black", "purple", "yellow", "red", "blue"])
+        if st.button("حفظ المجلد"):
+            st.session_state.folders[f_name] = f_color
+            st.rerun()
+
+    with col2:
+        st.subheader("📦 إضافة منتج")
+        p_name = st.text_input("اسم المنتج")
+        p_price = st.number_input("السعر", min_value=0.0)
+        p_stock = st.number_input("الكمية المتاحة", min_value=0)
+        p_folder = st.selectbox("المجلد التابع له", list(st.session_state.folders.keys()))
+        if st.button("إضافة للمخزن"):
+            st.session_state.inventory.append({"name": p_name, "price": p_price, "stock": p_stock, "folder": p_folder})
+            st.success("تمت الإضافة!")
+
+# --- 5. واجهة الكاشير (POS) ---
+elif page == "واجهة الكاشير (POS)":
+    col_pos, col_bill = st.columns([2, 1.3])
+
+    with col_pos:
+        st.subheader("🛍️ معرض المنتجات")
+        # زر العودة من المجلد للمجلدات الرئيسية
+        if st.session_state.current_folder:
+            if st.button("⬅️ العودة للمجلدات الرئيسية"):
+                st.session_state.current_folder = None
+                st.rerun()
+            
+            # عرض المنتجات داخل المجلد المختار
+            items = [i for i in st.session_state.inventory if i['folder'] == st.session_state.current_folder]
+            p_cols = st.columns(3)
+            for idx, item in enumerate(items):
+                with p_cols[idx % 3]:
+                    if st.button(f"{item['name']}\n{item['price']} ج", key=f"p_{idx}"):
+                        st.session_state.bill_items.append({"name": item['name'], "price": item['price'], "qty": 1, "disc": 0.0})
                         st.rerun()
-                
-                # الحسابات البرمجية لكل بند
-                subtotal = item['السعر'] * item['الكمية']
-                discount_val = subtotal * (item['الخصم %'] / 100)
-                net = subtotal - discount_val
-                grand_total += net
-                
-                bill_display.append({
-                    "البند": item['الصنف'],
-                    "السعر": item['السعر'],
-                    "الكمية": item['الكمية'],
-                    "الخصم": f"{item['الخصم %']}%",
-                    "الصافي": f"{net:,.2f} ج"
-                })
+        else:
+            # عرض المجلدات الملونة
+            f_cols = st.columns(4)
+            for idx, (name, color) in enumerate(st.session_state.folders.items()):
+                with f_cols[idx % 4]:
+                    st.markdown(f'<style>button[key="f_{name}"] {{background-color: {color} !important; color: white;}}</style>', unsafe_allow_html=True)
+                    if st.button(f"📁 {name}", key=f"f_{name}"):
+                        st.session_state.current_folder = name
+                        st.rerun()
+
+    with col_bill:
+        st.markdown('<div class="invoice-card">', unsafe_allow_html=True)
+        st.header("🧾 الفاتورة")
+        pay_mode = st.radio("طريقة الدفع", ["نقدي", "فيزا", "آجل"], horizontal=True)
+        
+        total = 0
+        for idx, b in enumerate(st.session_state.bill_items):
+            c1, c2, c3 = st.columns([2, 1, 0.5])
+            c1.write(f"**{b['name']}**")
+            b['qty'] = c2.number_input("الكمية", 1, key=f"q_{idx}")
+            if c3.button("❌", key=f"del_{idx}"):
+                st.session_state.bill_items.pop(idx)
+                st.rerun()
+            total += (b['price'] * b['qty'])
 
         st.divider()
-        st.table(pd.DataFrame(bill_display))
+        c_name = st.text_input("اسم العميل")
+        c_phone = st.text_input("رقم الواتساب")
         
-        st.markdown(f"""
-            <div class="total-section">
-                <h3>إجمالي الفاتورة المطلوب</h3>
-                <h1>{grand_total:,.2f} جنيه مصري</h1>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("💾 حفظ وطباعة الفاتورة (PDF)"):
-            st.balloons()
-            st.success("تم تسجيل الفاتورة في النظام!")
+        if st.button("✅ إتمام وحفظ الفاتورة"):
+            # حفظ في السجل الداخلي
+            bill_id = datetime.now().strftime("%H%M%S")
+            st.session_state.history.append({"id": bill_id, "customer": c_name, "total": total, "type": pay_mode, "date": str(datetime.now())})
             
-        if st.button("🚫 إلغاء العملية"):
+            # تجهيز رسالة واتساب
+            msg = f"فاتورة من Marketing Shop\nالعميل: {c_name}\nالإجمالي: {total} ج\nالدفع: {pay_mode}"
+            url = f"https://wa.me/{c_phone}?text={urllib.parse.quote(msg)}"
+            st.markdown(f'<a href="{url}" target="_blank">📲 اضغط هنا للإرسال عبر واتساب</a>', unsafe_allow_html=True)
+            
+            st.session_state.bill_items = [] # تصفير الفاتورة
+            st.balloons()
+            st.success("تم الحفظ في سجل اليوم!")
+
+        if st.button("🆕 فاتورة جديدة"):
             st.session_state.bill_items = []
             st.rerun()
-    else:
-        st.info("قم بالضغط على مربعات البضاعة في اليسار لبدء البيع")
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# إضافة بضاعة جديدة للمربعات
-with st.expander("⚙️ إعدادات: إضافة أصناف جديدة للمربعات"):
-    col_in1, col_in2 = st.columns(2)
-    with col_in1:
-        new_name = st.text_input("اسم المنتج الجديد")
-    with col_in2:
-        new_price = st.number_input("سعر البيع الافتراضي", min_value=0)
-    if st.button("إضافة للمحل"):
-        st.session_state.inventory.append({"name": new_name, "price": new_price})
-        st.success(f"تمت إضافة {new_name} بنجاح!")
-        st.rerun()
-        
+# --- 6. الصفحات الأخرى ---
+elif page == "رصيد المخازن":
+    st.header("📦 حالة المخزن")
+    if st.session_state.inventory:
+        st.table(pd.DataFrame(st.session_state.inventory))
+    else:
+        st.info("لا توجد أصناف مضافة")
+
+elif page == "سجل الفواتير":
+    st.header("📜 سجل المبيعات")
+    if st.session_state.history:
+        st.dataframe(pd.DataFrame(st.session_state.history))
+    else:
+        st.info("السجل فارغ")
+
