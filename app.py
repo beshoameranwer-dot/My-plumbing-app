@@ -210,4 +210,3 @@ elif page == "الإعدادات":
     if st.button("حفظ"):
         st.session_state.inventory.append({"name": pn, "price": pp, "stock": ps, "main": pm, "sub": pb})
         st.success("تم الحفظ")
-urllib.parsereportlab.pdfgenst.session_state.inventoryreportlab.lib.pagesizesst.session_state.foldersst.session_state.historyst.session_state.userst.session_state.nav20540st.radio200https://wa.me/{c_phone}?text={urllib.parse.quote(msg)st.info
