@@ -216,4 +216,11 @@ elif page == "إضافة منتجات ومجلدات":
     ps = st.selectbox("اختر القسم", st.session_state.sub_folders.get(pm, []))
     if st.button("حفظ الصنف"):
         st.session_state.inventory.append({"name": pn, "price": pp, "main": pm, "sub": ps})
-                
+                gspread
+google-auth
+streamlit
+pandas
+qrcode
+reportlab
+pillow
+
