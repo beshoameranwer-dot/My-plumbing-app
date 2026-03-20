@@ -6,24 +6,17 @@ import qrcode
 from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
 
-# --- 1. إعدادات الحسابات والبيانات ---
+# --- 1. إعدادات الحسابات ---
 USERS_DATABASE = {"Beshoy": "2008", "Admin": "2024", "Staff": "1234"}
-LOGO_URL = "https://i.imgur.com/vHq0M9n.png" # استبدل برابط لوجو مباشر
 
 st.set_page_config(page_title="Marketing Shop Pro", layout="wide")
 
-# تهيئة مخزن البيانات المؤقت (سيتم رفعه لجوجل شيت لاحقاً)
+# تهيئة مخزن البيانات (Session State)
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
-if 'inventory' not in st.session_state: 
-    # مثال لبيانات أولية (الاسم، السعر، الرصيد، الشركة، القسم)
-    st.session_state.inventory = [
-        {"name": "ماسورة 1 بوصة", "price": 100, "stock": 50, "main": "ايجيك", "sub": "Br"},
-        {"name": "كوع 90", "price": 15, "stock": 10, "main": "ايجيك", "sub": "SMART"}
-    ]
-if 'folders' not in st.session_state: st.session_state.folders = {"ايجيك": "#E67E22"}
-if 'sub_folders' not in st.session_state: st.session_state.sub_folders = {"ايجيك": ["Br", "SMART"]}
+if 'inventory' not in st.session_state: st.session_state.inventory = []
+if 'folders' not in st.session_state: st.session_state.folders = {}
+if 'sub_folders' not in st.session_state: st.session_state.sub_folders = {}
 if 'bill_items' not in st.session_state: st.session_state.bill_items = []
 if 'history' not in st.session_state: st.session_state.history = []
 if 'nav' not in st.session_state: st.session_state.nav = {"main": None, "sub": None}
@@ -35,7 +28,7 @@ COLOR_MAP = {
 
 # --- 2. نظام تسجيل الدخول ---
 if not st.session_state.logged_in:
-    st.markdown("<h2 style='text-align: center;'>🔐 Marketing Shop - تسجيل دخول</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>🔐 تسجيل الدخول - Marketing Shop</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
         u = st.text_input("اسم المستخدم")
@@ -45,37 +38,41 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.user = u
                 st.rerun()
-            else: st.error("بيانات الدخول خاطئة")
+            else: st.error("بيانات الدخول غير صحيحة")
     st.stop()
 
 # --- 3. وظيفة الفاتورة PDF والـ QR ---
-def create_pdf(c_name, items, total, seller, op_type):
+def create_pdf(c_name, c_phone, items, total, seller, op_type):
     buf = BytesIO()
     p = canvas.Canvas(buf, pagesize=A4)
     width, height = A4
     
-    # إضافة اللوجو
-    try:
-        logo = ImageReader(LOGO_URL)
-        p.drawImage(logo, width/2 - 50, height - 100, width=100, height=50, preserveAspectRatio=True)
-    except: p.drawCentredString(width/2, height-80, "MARKETING SHOP PRO")
+    p.setFont("Helvetica-Bold", 22)
+    p.drawCentredString(width/2, height - 60, "MARKETING SHOP PRO")
+    p.setFont("Helvetica-Bold", 16)
+    p.drawCentredString(width/2, height - 90, f"INVOICE - {op_type}")
 
-    # QR Code
-    qr = qrcode.make(f"Type: {op_type}\nTotal: {total}\nSeller: {seller}")
-    qr_buf = BytesIO()
-    qr.save(qr_buf, format='PNG')
-    p.drawInlineImage(qr_buf, width - 120, height - 120, width=80, height=80)
-
-    p.setFont("Helvetica-Bold", 14)
-    p.drawString(50, height-140, f"Customer: {c_name}")
-    p.drawString(50, height-155, f"Operation: {op_type}")
-    p.drawString(50, height-170, f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+    qr = qrcode.QRCode(box_size=10, border=2)
+    qr.add_data(f"Type: {op_type}\nTotal: {total}\nSeller: {seller}\nCustomer: {c_name}")
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
     
-    y = height - 210
+    qr_buf = BytesIO()
+    qr_img.save(qr_buf, format='PNG')
+    qr_buf.seek(0)
+    p.drawInlineImage(qr_buf, width - 110, height - 110, width=80, height=80)
+
+    p.setFont("Helvetica", 12)
+    p.drawString(50, height - 130, f"Customer: {c_name}")
+    p.drawString(50, height - 145, f"Phone: {c_phone}")
+    p.drawString(50, height - 160, f"Seller: {seller}")
+    p.drawString(50, height - 175, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    
+    y = height - 205
     p.line(50, y, 550, y)
-    p.drawString(60, y-20, "Item")
-    p.drawString(400, y-20, "Qty")
-    p.drawString(480, y-20, "Total")
+    p.drawString(60, y - 20, "Item Name")
+    p.drawString(400, y - 20, "Qty")
+    p.drawString(480, y - 20, "Total")
     
     y -= 40
     for item in items:
@@ -86,24 +83,24 @@ def create_pdf(c_name, items, total, seller, op_type):
         y -= 20
         
     p.line(50, y, 550, y)
-    p.setFont("Helvetica-Bold", 16)
-    p.drawString(350, y-30, f"Net Total: {total:,.2f} EGP")
+    p.setFont("Helvetica-Bold", 14)
+    p.drawString(380, y - 30, f"Grand Total: {total:,.2f} EGP")
     p.save()
     buf.seek(0)
     return buf
 
 # --- 4. القائمة الجانبية ---
 with st.sidebar:
-    st.header(f"👤 {st.session_state.user}")
-    page = st.radio("انتقل إلى:", ["صالة البيع (POS)", "رصيد المخازن", "سجل التقارير", "الإعدادات"])
-    if st.button("🚪 خروج"):
+    st.title("🏪 القائمة")
+    st.write(f"👤 المستخدم: **{st.session_state.user}**")
+    page = st.radio("اختر الصفحة:", ["صالة البيع", "المخزن", "التقارير", "الإعدادات"])
+    if st.button("🚪 تسجيل الخروج"):
         st.session_state.logged_in = False
         st.rerun()
 
 # --- 5. صالة البيع (POS) ---
-if page == "صالة البيع (POS)":
+if page == "صالة البيع":
     col_pos, col_bill = st.columns([2, 1.2])
-    
     with col_pos:
         if st.session_state.nav["main"]:
             if st.button("🔙 عودة"):
@@ -112,11 +109,11 @@ if page == "صالة البيع (POS)":
                 st.rerun()
 
         if not st.session_state.nav["main"]:
-            st.subheader("🏢 الشركات")
+            st.subheader("📁 الشركات")
             cols = st.columns(3)
             for name, color in st.session_state.folders.items():
                 st.markdown(f'<style>button[key="{name}"] {{background-color: {color} !important; color: white !important;}}</style>', unsafe_allow_html=True)
-                if st.button(f"📁 {name}", key=name): st.session_state.nav["main"] = name; st.rerun()
+                if st.button(f"🏢 {name}", key=name): st.session_state.nav["main"] = name; st.rerun()
         
         elif not st.session_state.nav["sub"]:
             subs = st.session_state.sub_folders.get(st.session_state.nav["main"], [])
@@ -126,16 +123,17 @@ if page == "صالة البيع (POS)":
         else:
             items = [i for i in st.session_state.inventory if i['main']==st.session_state.nav['main'] and i['sub']==st.session_state.nav['sub']]
             for item in items:
-                if st.button(f"{item['name']} - {item['price']}ج (المتاح: {item['stock']})"):
+                if st.button(f"📦 {item['name']} | {item['price']} ج (رصيد: {item['stock']})"):
                     if item['stock'] > 0:
                         st.session_state.bill_items.append({"name": item['name'], "price": item['price'], "qty": 1, "disc_pct": 0, "id": datetime.now().timestamp()})
                         st.rerun()
-                    else: st.error("عفواً، الكمية نفدت!")
+                    else: st.error("الكمية نفدت!")
 
     with col_bill:
-        st.header("🧾 الفاتورة")
-        op_type = st.radio("النوع:", ["مبيعات", "مرتجع"], horizontal=True)
+        st.subheader("🧾 الفاتورة")
+        op_type = st.radio("نوع العملية:", ["مبيعات", "مرتجع"], horizontal=True)
         c_name = st.text_input("اسم العميل")
+        c_phone = st.text_input("رقم الموبايل (واتساب)")
         
         grand_total = 0
         for idx, b in enumerate(st.session_state.bill_items):
@@ -144,53 +142,50 @@ if page == "صالة البيع (POS)":
             b['disc_pct'] = st.slider("خصم %", 0, 100, key=f"d_{b['id']}")
             res = (b['price'] * b['qty']) * (1 - b['disc_pct']/100)
             grand_total += res
-            if st.button("🗑️", key=f"del_{b['id']}"): st.session_state.bill_items.pop(idx); st.rerun()
+            if st.button("🗑️ حذف", key=f"del_{b['id']}"): st.session_state.bill_items.pop(idx); st.rerun()
 
         final_val = -grand_total if op_type == "مرتجع" else grand_total
         st.write(f"### الإجمالي: {final_val:,.2f} ج")
         
-        if st.button("✅ تأكيد العملية"):
-            # تحديث رصيد المخزن
+        if st.button("✅ تأكيد وحفظ"):
             for b in st.session_state.bill_items:
                 for inv in st.session_state.inventory:
                     if inv['name'] == b['name']:
                         if op_type == "مبيعات": inv['stock'] -= b['qty']
                         else: inv['stock'] += b['qty']
             
-            # حفظ في السجل
+            # إرسال رسالة واتساب
+            msg = f"مرحباً {c_name}، شكراً لتعاملك مع Marketing Shop. فاتورة {op_type} بمبلغ {final_val} ج. نتمنى زيارتكم قريباً!"
+            wa_link = f"https://wa.me/{c_phone}?text={urllib.parse.quote(msg)}"
+            
             st.session_state.history.append({
-                "الوقت": datetime.now().strftime("%H:%M"),
-                "النوع": op_type, "العميل": c_name, "المبلغ": final_val, "البائع": st.session_state.user
+                "الوقت": datetime.now().strftime("%H:%M"), 
+                "النوع": op_type, "العميل": c_name, "الموبايل": c_phone, 
+                "المبلغ": final_val, "البائع": st.session_state.user
             })
             
-            pdf = create_pdf(c_name, st.session_state.bill_items, final_val, st.session_state.user, op_type)
-            st.download_button("📥 تحميل PDF", data=pdf, file_name=f"{c_name}.pdf")
+            pdf = create_pdf(c_name, c_phone, st.session_state.bill_items, final_val, st.session_state.user, op_type)
+            st.download_button("📥 تحميل الفاتورة", data=pdf, file_name=f"Invoice_{c_name}.pdf")
+            st.markdown(f'[💬 إرسال واتساب]({wa_link})', unsafe_allow_html=True)
             st.session_state.bill_items = []
-            st.success("تم الحفظ وتحديث المخزن!")
 
-# --- 6. رصيد المخازن ---
-elif page == "رصيد المخازن":
-    st.header("📦 رصيد المخازن الحالي")
-    df = pd.DataFrame(st.session_state.inventory)
-    st.table(df)
-    
-    # تنبيه للأصناف المنتهية
-    low_stock = [i['name'] for i in st.session_state.inventory if i['stock'] < 5]
-    if low_stock: st.warning(f"⚠️ أصناف أوشكت على النفاد: {', '.join(low_stock)}")
+# --- الصفحات الأخرى ---
+elif page == "المخزن":
+    st.header("📦 رصيد المخزن")
+    if st.session_state.inventory:
+        st.table(pd.DataFrame(st.session_state.inventory))
+    else: st.info("المخزن فارغ")
 
-# --- 7. السجل والتقارير ---
-elif page == "سجل التقارير":
-    st.header("📊 ملخص المبيعات")
+elif page == "التقارير":
+    st.header("📊 التقارير")
     if st.session_state.history:
         df_h = pd.DataFrame(st.session_state.history)
         st.table(df_h)
-        st.metric("صافي الدخل", f"{df_h['المبلغ'].sum():,.2f} ج")
-        
-        if st.session_state.user == "Beshoy":
-            if st.button("🗑️ مسح السجل"): st.session_state.history = []; st.rerun()
-    else: st.info("لا توجد عمليات اليوم")
+        st.metric("صافي الربح اليومي", f"{df_h['المبلغ'].sum()} ج")
+        if st.session_state.user == "Beshoy" and st.button("🗑️ مسح السجل"):
+            st.session_state.history = []; st.rerun()
+    else: st.info("لا توجد مبيعات بعد")
 
-# --- 8. الإعدادات ---
 elif page == "الإعدادات":
     st.header("⚙️ إضافة بيانات")
     col1, col2 = st.columns(2)
@@ -202,17 +197,17 @@ elif page == "الإعدادات":
             st.session_state.sub_folders[m_n] = []
     with col2:
         parent = st.selectbox("تابع لشركة", list(st.session_state.folders.keys()))
-        s_n = st.text_input("اسم القسم الفرعي")
+        s_n = st.text_input("اسم القسم")
         if st.button("إضافة قسم"): st.session_state.sub_folders[parent].append(s_n)
     
     st.divider()
-    st.subheader("➕ إضافة صنف جديد")
-    p_n = st.text_input("اسم المنتج")
-    p_p = st.number_input("السعر")
-    p_s = st.number_input("الرصيد الافتتاحي", min_value=0)
-    p_m = st.selectbox("اختر الشركة", list(st.session_state.folders.keys()))
-    p_sub = st.selectbox("اختر القسم", st.session_state.sub_folders.get(p_m, []))
-    if st.button("حفظ المنتج للمخزن"):
-        st.session_state.inventory.append({"name": p_n, "price": p_p, "stock": p_s, "main": p_m, "sub": p_sub})
+    st.subheader("➕ إضافة صنف")
+    pn = st.text_input("الاسم")
+    pp = st.number_input("السعر")
+    ps = st.number_input("الكمية", min_value=0)
+    pm = st.selectbox("الشركة", list(st.session_state.folders.keys()))
+    pb = st.selectbox("القسم", st.session_state.sub_folders.get(pm, []))
+    if st.button("حفظ"):
+        st.session_state.inventory.append({"name": pn, "price": pp, "stock": ps, "main": pm, "sub": pb})
         st.success("تم الحفظ")
-                            
+urllib.parsereportlab.pdfgenst.session_state.inventoryreportlab.lib.pagesizesst.session_state.foldersst.session_state.historyst.session_state.userst.session_state.nav20540st.radio200https://wa.me/{c_phone}?text={urllib.parse.quote(msg)st.info
